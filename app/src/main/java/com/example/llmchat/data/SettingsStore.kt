@@ -1,6 +1,7 @@
 package com.example.llmchat.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -17,6 +18,9 @@ class SettingsStore(private val context: Context) {
         private val KEY_BASE_URL = stringPreferencesKey("base_url")
         private val KEY_API_KEY = stringPreferencesKey("api_key")
         private val KEY_MODEL = stringPreferencesKey("model")
+
+        private val KEY_FORCE_JSON = booleanPreferencesKey("force_json_schema") // NEW
+
     }
 
     val flow: Flow<LlmSettings> = context.dataStore.data.map { p ->
@@ -24,7 +28,8 @@ class SettingsStore(private val context: Context) {
             provider = LlmSettings.Provider.values().getOrElse(p[KEY_PROVIDER] ?: 0) { LlmSettings.Provider.OpenAI },
             baseUrl = p[KEY_BASE_URL] ?: "https://api.openai.com",
             apiKey = p[KEY_API_KEY] ?: "",
-            model = p[KEY_MODEL] ?: "gpt-4o-mini"
+            model = p[KEY_MODEL] ?: "gpt-4o-mini",
+            forceJsonSchema = p[KEY_FORCE_JSON] ?: true // NEW (default = true)
         )
     }
 
@@ -34,6 +39,7 @@ class SettingsStore(private val context: Context) {
             e[KEY_BASE_URL] = s.baseUrl
             e[KEY_API_KEY] = s.apiKey
             e[KEY_MODEL] = s.model
+            e[KEY_FORCE_JSON] = s.forceJsonSchema // NEW
         }
     }
 }

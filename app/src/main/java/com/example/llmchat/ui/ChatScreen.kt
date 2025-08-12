@@ -14,6 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.llmchat.net.LlmSettings
+import org.json.JSONObject
+import org.json.JSONTokener
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,22 +110,55 @@ private fun MessagesList(messages: List<ChatMessage>) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
             ) {
-                Surface(
-                    color = if (isUser) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.secondaryContainer,
-                    shape = MaterialTheme.shapes.large,
-                    tonalElevation = 1.dp,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                ) {
-                    Text(
-                        text = msg.content,
-                        modifier = Modifier.padding(12.dp)
-                    )
-                }
+                MessageBubble(msg.content, isUser)
             }
         }
     }
 }
+
+@Composable
+private fun MessageBubble(text: String, isUser: Boolean) {
+    // Пытаемся распарсить JSON {title, description}
+    val parsed = remember(text) { parseTitleDescriptionOrNull(text) }
+
+    Surface(
+        color = if (isUser) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.secondaryContainer,
+        shape = MaterialTheme.shapes.large,
+        tonalElevation = 1.dp,
+        modifier = Modifier.padding(vertical = 4.dp)
+    ) {
+        if (parsed != null) {
+            Column(Modifier.padding(12.dp)) {
+                Text(
+                    parsed.first,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    parsed.second,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        } else {
+            Text(text = text, modifier = Modifier.padding(12.dp))
+        }
+    }
+}
+
+private fun parseTitleDescriptionOrNull(raw: String): Pair<String, String>? {
+    return try {
+        val any = JSONTokener(raw.trim()).nextValue()
+        if (any is JSONObject) {
+            val title = any.optString("title", null)
+            val description = any.optString("description", null)
+            if (!title.isNullOrBlank() && !description.isNullOrBlank()) title to description else null
+        } else null
+    } catch (_: Throwable) {
+        null
+    }
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -136,6 +171,7 @@ private fun SettingsSheet(
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
     var model by remember { mutableStateOf(initial.model) }
+    var forceJson by remember { mutableStateOf(initial.forceJsonSchema) } // NEW
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(16.dp)) {
@@ -168,6 +204,15 @@ private fun SettingsSheet(
                 label = { Text("Model") },
                 singleLine = true
             )
+
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Строгий JSON (Schema)", modifier = Modifier.weight(1f))
+                Switch(checked = forceJson, onCheckedChange = { forceJson = it })
+            }
 
             Spacer(Modifier.height(16.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
