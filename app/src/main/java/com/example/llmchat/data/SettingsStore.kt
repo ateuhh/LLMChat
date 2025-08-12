@@ -19,7 +19,8 @@ class SettingsStore(private val context: Context) {
         private val KEY_API_KEY = stringPreferencesKey("api_key")
         private val KEY_MODEL = stringPreferencesKey("model")
 
-        private val KEY_FORCE_JSON = booleanPreferencesKey("force_json_schema") // NEW
+        private val KEY_FORCE_JSON = booleanPreferencesKey("force_json_schema")
+        private val KEY_SYSTEM_PROMPT = stringPreferencesKey("system_prompt")
 
     }
 
@@ -29,7 +30,8 @@ class SettingsStore(private val context: Context) {
             baseUrl = p[KEY_BASE_URL] ?: "https://api.openai.com",
             apiKey = p[KEY_API_KEY] ?: "",
             model = p[KEY_MODEL] ?: "gpt-4o-mini",
-            forceJsonSchema = p[KEY_FORCE_JSON] ?: true // NEW (default = true)
+            forceJsonSchema = p[KEY_FORCE_JSON] ?: true,
+            systemPrompt = p[KEY_SYSTEM_PROMPT] ?: "",
         )
     }
 
@@ -39,7 +41,8 @@ class SettingsStore(private val context: Context) {
             e[KEY_BASE_URL] = s.baseUrl
             e[KEY_API_KEY] = s.apiKey
             e[KEY_MODEL] = s.model
-            e[KEY_FORCE_JSON] = s.forceJsonSchema // NEW
+            e[KEY_FORCE_JSON] = s.forceJsonSchema
+            e[KEY_SYSTEM_PROMPT] = s.systemPrompt
         }
     }
 }

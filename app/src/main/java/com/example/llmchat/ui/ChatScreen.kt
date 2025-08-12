@@ -3,8 +3,10 @@ package com.example.llmchat.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -14,8 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.llmchat.net.LlmSettings
-import org.json.JSONObject
-import org.json.JSONTokener
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -24,7 +24,8 @@ fun ChatScreen(
     onSend: () -> Unit,
     onInputChange: (String) -> Unit,
     onOpenSettings: (Boolean) -> Unit,
-    onSaveSettings: (LlmSettings) -> Unit
+    onSaveSettings: (LlmSettings) -> Unit,
+    onNewChat: () -> Unit
 ) {
     var showSettings by remember { mutableStateOf(false) }
 
@@ -33,6 +34,9 @@ fun ChatScreen(
             TopAppBar(
                 title = { Text("LLM Chat") },
                 actions = {
+                    IconButton(onClick = onNewChat) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Новый плейлист")
+                    }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
@@ -58,7 +62,8 @@ fun ChatScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                     FilledIconButton(onClick = onSend, enabled = !state.sending) {
-                        Icon(Icons.Default.Send, contentDescription = "Send")
+                        Icon(Icons.Default.Send, contentDescription = null) // иконка не важна
+                        // при желании замени на Send (оставлено как нейтрально)
                     }
                 }
             }
@@ -104,13 +109,16 @@ private fun MessagesList(messages: List<ChatMessage>) {
             .padding(8.dp),
         reverseLayout = false
     ) {
-        items(messages) { msg ->
+        itemsIndexed(messages) { index, msg ->
             val isUser = msg.role == ChatMessage.Role.User
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
             ) {
-                MessageBubble(msg.content, isUser)
+                MessageBubble(
+                    text = msg.content,
+                    isUser = isUser
+                )
             }
         }
     }
@@ -118,9 +126,6 @@ private fun MessagesList(messages: List<ChatMessage>) {
 
 @Composable
 private fun MessageBubble(text: String, isUser: Boolean) {
-    // Пытаемся распарсить JSON {title, description}
-    val parsed = remember(text) { parseTitleDescriptionOrNull(text) }
-
     Surface(
         color = if (isUser) MaterialTheme.colorScheme.primaryContainer
         else MaterialTheme.colorScheme.secondaryContainer,
@@ -128,37 +133,19 @@ private fun MessageBubble(text: String, isUser: Boolean) {
         tonalElevation = 1.dp,
         modifier = Modifier.padding(vertical = 4.dp)
     ) {
-        if (parsed != null) {
-            Column(Modifier.padding(12.dp)) {
-                Text(
-                    parsed.first,
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    parsed.second,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        } else {
-            Text(text = text, modifier = Modifier.padding(12.dp))
+        Row(
+            modifier = Modifier
+                .padding(12.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.Top
+        ) {
+            Text(
+                text = text,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
-
-private fun parseTitleDescriptionOrNull(raw: String): Pair<String, String>? {
-    return try {
-        val any = JSONTokener(raw.trim()).nextValue()
-        if (any is JSONObject) {
-            val title = any.optString("title", null)
-            val description = any.optString("description", null)
-            if (!title.isNullOrBlank() && !description.isNullOrBlank()) title to description else null
-        } else null
-    } catch (_: Throwable) {
-        null
-    }
-}
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -171,14 +158,14 @@ private fun SettingsSheet(
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
     var model by remember { mutableStateOf(initial.model) }
-    var forceJson by remember { mutableStateOf(initial.forceJsonSchema) } // NEW
+    var forceJson by remember { mutableStateOf(initial.forceJsonSchema) }
+    var systemPrompt by remember { mutableStateOf(initial.systemPrompt) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(16.dp)) {
             Text("Settings", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(12.dp))
 
-            // Provider
             Text("Provider", style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(6.dp))
             ProviderChips(provider) { provider = it }
@@ -206,20 +193,37 @@ private fun SettingsSheet(
             )
 
             Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Строгий JSON (Schema)", modifier = Modifier.weight(1f))
                 Switch(checked = forceJson, onCheckedChange = { forceJson = it })
             }
+
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = systemPrompt,
+                onValueChange = { systemPrompt = it },
+                label = { Text("System Prompt (инструкция)") },
+                minLines = 3,
+                maxLines = 6,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("По умолчанию — плейлист, нумерованный список «Исполнитель — Песня»") }
+            )
 
             Spacer(Modifier.height(16.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onDismiss) { Text("Cancel") }
                 Spacer(Modifier.width(8.dp))
                 Button(onClick = {
-                    onSave(LlmSettings(provider, baseUrl.trim(), apiKey.trim(), model.trim()))
+                    onSave(
+                        LlmSettings(
+                            provider = provider,
+                            baseUrl = baseUrl.trim(),
+                            apiKey = apiKey.trim(),
+                            model = model.trim(),
+                            forceJsonSchema = forceJson,
+                            systemPrompt = systemPrompt.trim()
+                        )
+                    )
                 }) { Text("Save") }
             }
             Spacer(Modifier.height(12.dp))
@@ -229,19 +233,18 @@ private fun SettingsSheet(
 
 @Composable
 private fun ProviderChips(selected: LlmSettings.Provider, onChange: (LlmSettings.Provider) -> Unit) {
-    FlowRowMainAxis {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         FilterChip(
             selected = selected == LlmSettings.Provider.OpenAI,
-            onClick = {
-                onChange(LlmSettings.Provider.OpenAI)
-            },
+            onClick = { onChange(LlmSettings.Provider.OpenAI) },
             label = { Text("OpenAI") }
         )
         FilterChip(
             selected = selected == LlmSettings.Provider.OpenRouter,
-            onClick = {
-                onChange(LlmSettings.Provider.OpenRouter)
-            },
+            onClick = { onChange(LlmSettings.Provider.OpenRouter) },
             label = { Text("OpenRouter") }
         )
         FilterChip(
@@ -250,13 +253,4 @@ private fun ProviderChips(selected: LlmSettings.Provider, onChange: (LlmSettings
             label = { Text("Custom") }
         )
     }
-}
-
-// маленький helper без зависимости на Accompanist
-@Composable
-private fun FlowRowMainAxis(content: @Composable RowScope.() -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) { content() }
 }

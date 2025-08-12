@@ -17,7 +17,8 @@ data class LlmSettings(
     val apiKey: String = "",
     val model: String = "gpt-4.1-mini",
     /** Включать ли строгий JSON-формат через text.format=json_schema */
-    val forceJsonSchema: Boolean = true
+    val forceJsonSchema: Boolean = false,
+    val systemPrompt: String = ""
 ) {
     enum class Provider { OpenAI, OpenRouter, Custom }
 }
@@ -62,76 +63,61 @@ class LlmClient(private var settings: LlmSettings) {
      * "system" → instructions (берём последний system),
      * "user"/"assistant" → в input как части с type="input_text".
      */
-    suspend fun complete(messages: List<Pair<String, String>>): String = withContext(Dispatchers.IO) {
-        val instructions = messages.lastOrNull { it.first == "system" }?.second
+    suspend fun complete(
+        messages: List<Pair<String, String>>,
+        overrideInput: String? = null,
+        systemPrompt: String
+    ): String =
+        withContext(Dispatchers.IO) {
+            val input: Any = if (overrideInput != null) {
+                overrideInput
+            } else {
+                val list = messages.map { (role, text) -> SimpleMessage(role = role, content = text) }
+                if (list.size == 1) list.first().content else list
+            }
 
-        val chatInputList = messages
-            .filter { it.first == "user" || it.first == "assistant" }
-            .map { (role, text) -> SimpleMessage(role = role, content = text) }
-
-        // Если хотим отправлять только последнюю пользовательскую реплику как строку,
-        // можно заменить на: val input: Any = chatInputList.lastOrNull()?.content ?: ""
-        val input: Any = if (chatInputList.size == 1) {
-            // один элемент — отправим просто строкой (минимальный запрос)
-            chatInputList.first().content
-        } else {
-            // несколько — отправляем как список сообщений
-            chatInputList
-        }
-
-        // Настройка формата вывода:
-        // - строгая схема (json_schema) для объекта { title, description }
-        // - либо "json" для любого валидного JSON
-        val textOptions = if (settings.forceJsonSchema) {
-            val schema = mapOf(
-                "type" to "object",
-                "properties" to mapOf(
-                    "title" to mapOf("type" to "string"),
-                    "description" to mapOf("type" to "string")
-                ),
-                "required" to listOf("title", "description"),
-                "additionalProperties" to false
-            )
-            TextOptions(
-                format = TextFormat(
-                    type = "json_schema",
-                    name = "answer_object",
-                    strict = true,
-                    schema = schema
+            val textOptions = if (settings.forceJsonSchema) {
+                val schema = mapOf(
+                    "type" to "object",
+                    "properties" to mapOf(
+                        "title" to mapOf("type" to "string"),
+                        "description" to mapOf("type" to "string")
+                    ),
+                    "required" to listOf("title", "description"),
+                    "additionalProperties" to false
                 )
+                TextOptions(format = TextFormat(type = "json_schema", name = "answer_object", strict = true, schema = schema))
+            } else {
+                TextOptions(format = TextFormat(type = "json"))
+            }
+
+            val body = ResponsesRequest(
+                model = settings.model,
+                instructions = systemPrompt,
+                input = input,
+                temperature = 0.7,
+                maxOutputTokens = 512,
+                text = null
             )
-        } else {
-            TextOptions(format = TextFormat(type = "json"))
+
+            try {
+                val resp = api.createResponse("Bearer ${settings.apiKey}", body)
+                // ...
+                resp.outputText ?: run {
+                    // 2) Фоллбэк: собрать все кусочки output_text
+                    val parts = resp.output.orEmpty()
+                        .flatMap { it.content.orEmpty() }
+                        .filter { it.type == "output_text" }
+                        .mapNotNull { it.text }
+                    parts.joinToString("\n").ifBlank { null }
+                } ?: error("Empty response")
+            } catch (e: retrofit2.HttpException) {
+                val code = e.code() // 400
+                val raw = e.response()?.errorBody()?.string()
+                // Обычно провайдер вернёт JSON вида:
+                // {"error":{"message":"...","type":"...","code":"..."}}
+                Log.e("LLM", "HTTP $code: $raw")
+                ""
+            }
         }
-
-        val body = ResponsesRequest(
-            model = settings.model,
-            instructions = instructions ?: "Отвечай строго JSON-объектом {\"title\":\"…\",\"description\":\"…\"} без текста вне JSON.",
-            input = input,
-            temperature = 0.7,
-            maxOutputTokens = 512,
-            text = textOptions
-        )
-
-
-        try {
-            val resp = api.createResponse("Bearer ${settings.apiKey}", body)
-            // ...
-            resp.outputText ?: run {
-                // 2) Фоллбэк: собрать все кусочки output_text
-                val parts = resp.output.orEmpty()
-                    .flatMap { it.content.orEmpty() }
-                    .filter { it.type == "output_text" }
-                    .mapNotNull { it.text }
-                parts.joinToString("\n").ifBlank { null }
-            } ?: error("Empty response")
-        } catch (e: retrofit2.HttpException) {
-            val code = e.code() // 400
-            val raw = e.response()?.errorBody()?.string()
-            // Обычно провайдер вернёт JSON вида:
-            // {"error":{"message":"...","type":"...","code":"..."}}
-            Log.e("LLM", "HTTP $code: $raw")
-            ""
-        }
-    }
 }
