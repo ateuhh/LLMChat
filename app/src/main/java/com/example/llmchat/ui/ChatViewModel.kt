@@ -8,9 +8,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-data class ChatMessage(val role: Role, val content: String) {
+data class ChatMessage(
+    val role: Role,
+    val content: String,
+    val agentType: AgentType? = null
+) {
     enum class Role { User, Assistant, System }
 }
+enum class AgentType { MUSIC, MOVIE }
 
 data class UiState(
     val settings: LlmSettings,
@@ -26,7 +31,17 @@ class ChatViewModel(
 
     private var client = LlmClient(initialSettings)
 
-    // === Детекторы признаков ===
+    // ===== Диалоговые фазы и управление вопросами =====
+    private enum class Phase { GATHERING, FEEDBACK_PENDING, MOVIE_DONE }
+    private var phase: Phase = Phase.GATHERING
+
+    /** Разрешён ли следующий уточняющий вопрос (true ставим только ПОСЛЕ ответа пользователя). */
+    private var followUpPending: Boolean = false
+
+    // Небольшая история 2-го агента
+    private val agent2History = mutableListOf<Pair<String, String>>() // role -> text
+
+    // ===== Детектирование признаков =====
     private enum class Signal { GENRE, ARTIST, MOOD, LANGUAGE, TEMPO }
 
     private val GENRE_WORDS = setOf(
@@ -56,6 +71,7 @@ class ChatViewModel(
         "italian","итальянский","portuguese","португальский"
     ).map { it.lowercase() }.toSet()
 
+    // ===== Промпты и приветствие =====
     private fun defaultSystemPrompt() = """
 Ты — музыкальный редактор и эксперт по подбору треков.
 Наша цель — составить для пользователя идеальный плейлист из 10 песен.
@@ -70,15 +86,34 @@ class ChatViewModel(
 3) Не добавляй НИЧЕГО, кроме этого списка: никаких вступлений, пояснений, эмодзи и т.п.
 """.trimIndent()
 
-
     private fun greetingText() = """
 Привет! Составлю для тебя идеальный плейлист из 10 треков.
 Расскажи, пожалуйста, какие жанры/настроения тебе ближе, любимых артистов, язык вокала и темп (спокойный/энергичный).
-Когда будет достаточно информации, я отправлю итоговый список «Исполнитель — Название песни».
+Когда будет достаточно информации, я отправлю итоговый НУМЕРОВАННЫЙ список «Исполнитель — Название песни».
+""".trimIndent()
+
+    private fun agent2SystemPrompt() = """
+Ты — кинокуратор. Работаешь на русском.
+Тебе дают: (1) финальный музыкальный плейлист пользователя (нумерованный список из 10 строк «Исполнитель — Песня»),
+(2) реакцию пользователя на плейлист и/или ответы про настроение.
+
+Алгоритм:
+- Определи, понравился плейлист (да/нет) и настроение пользователя.
+- Если понравился: СРАЗУ предложи 5 фильмов, соответствующих настроению/вайбу плейлиста.
+- Если НЕ понравился: задай максимум 1 короткий уточняющий вопрос о желаемом настроении/жанрах/темпе, затем предложи 5 фильмов.
+
+Формат рекомендаций строго:
+- Одна краткая строка резюме настроения.
+- Затем НУМЕРОВАННЫЙ список из 5 строк:
+  1. Название (Год) — Режиссёр
+  2. ...
+  5. ...
+Никаких лишних блоков до/после списка. Вопросы — отдельным коротким сообщением.
 """.trimIndent()
 
     private fun initialMessages(settings: LlmSettings): List<ChatMessage> = listOf(
-        ChatMessage(ChatMessage.Role.Assistant, greetingText())
+        // System скрыт из ленты — только приветствие от музыкального агента (с бейджем)
+        ChatMessage(ChatMessage.Role.Assistant, greetingText(), agentType = AgentType.MUSIC)
     )
 
     private val _state = MutableStateFlow(
@@ -93,14 +128,9 @@ class ChatViewModel(
         _state.value = _state.value.copy(settings = newSettings)
         client.updateSettings(newSettings)
 
-        // Просто обновляем приветствие, без System Prompt в чате
-        val cur = _state.value.messages.toMutableList()
-        if (cur.isEmpty() || cur.first().role != ChatMessage.Role.Assistant) {
-            cur.clear()
-            cur.add(ChatMessage(ChatMessage.Role.Assistant, greetingText()))
-        } else {
-            cur[0] = ChatMessage(ChatMessage.Role.Assistant, greetingText())
-        }
+        // Перезаписываем приветствие (System не показываем)
+        val cur = mutableListOf<ChatMessage>()
+        cur.add(ChatMessage(ChatMessage.Role.Assistant, greetingText(), agentType = AgentType.MUSIC))
         _state.value = _state.value.copy(messages = cur)
     }
 
@@ -109,6 +139,10 @@ class ChatViewModel(
     }
 
     fun newChat() {
+        phase = Phase.GATHERING
+        followUpPending = false
+        agent2History.clear()
+
         _state.value = _state.value.copy(
             messages = initialMessages(_state.value.settings),
             input = "",
@@ -117,24 +151,19 @@ class ChatViewModel(
         )
     }
 
-    // --- Детекторы сигналов из последних сообщений пользователя ---
+    // ===== Детекция признаков и вопросы =====
     private fun detectSignalsFrom(text: String): Set<Signal> {
         val t = text.lowercase()
-        var hasGenre = GENRE_WORDS.any { t.contains(it) }
-        var hasMood = MOOD_WORDS.any { t.contains(it) }
-        var hasTempo = TEMPO_WORDS.any { t.contains(it) }
-        var hasLang = LANGUAGE_WORDS.any { t.contains(it) }
+        val hasGenre = GENRE_WORDS.any { t.contains(it) }
+        val hasMood = MOOD_WORDS.any { t.contains(it) }
+        val hasTempo = TEMPO_WORDS.any { t.contains(it) }
+        val hasLang = LANGUAGE_WORDS.any { t.contains(it) }
 
-        // Примитивная эвристика «имя артиста»
         val ARTIST_REGEX = Regex("""\b([A-ZА-Я][\p{L}\d'.-]+(?:\s+[A-ZА-Я][\p{L}\d'.-]+){0,2})\b""")
         val commonStarts = setOf("Привет","Здравствуйте","Hey","Hello","Hi")
-        val artistCandidates = ARTIST_REGEX.findAll(text)
+        val hasArtist = ARTIST_REGEX.findAll(text)
             .map { it.value.trim() }
-            .filter { it.length in 2..40 }
-            .filterNot { commonStarts.contains(it) }
-            .take(3)
-            .toList()
-        val hasArtist = artistCandidates.isNotEmpty()
+            .any { it.length in 2..40 && it !in commonStarts }
 
         val out = mutableSetOf<Signal>()
         if (hasGenre) out += Signal.GENRE
@@ -201,54 +230,163 @@ $allText
         return qMarks.any { t.lowercase().contains("$it ") }
     }
 
-    // --- Публичная отправка: добавляет твоё сообщение, ждёт ответ модели ---
+    private fun containsFiveNumberedLines(text: String): Boolean {
+        val lines = text.trim().lines().map { it.trim() }
+        val numbered = lines.count { it.matches(Regex("""^\d+\.\s+.+""")) }
+        return numbered >= 5
+    }
+
+    // ===== Новый универсальный детектор плейлиста и запуск киноагента =====
+    private fun isTenTrackNumberedPlaylist(text: String): Boolean {
+        val lines = text.trim().lines().map { it.trim() }
+        val numbered = lines.count { it.matches(Regex("""^\d+\.\s+.+""")) }
+        return numbered >= 10
+    }
+
+    /** Единая точка старта киноагента — вызываем после любого ответа музыкального агента */
+    private fun maybeStartMovieAgent(latestMusicReply: String) {
+        if (phase != Phase.GATHERING) return
+        if (!isTenTrackNumberedPlaylist(latestMusicReply)) return
+
+        phase = Phase.FEEDBACK_PENDING
+        val ask = "Понравился ли тебе этот плейлист? Если да — в двух словах опиши настроение; если нет — расскажи, какого настроения хочется."
+        _state.value = _state.value.copy(
+            messages = _state.value.messages + ChatMessage(
+                ChatMessage.Role.Assistant,
+                ask,
+                agentType = AgentType.MOVIE
+            )
+        )
+        agent2History.clear()
+        agent2History += "assistant" to ask
+        // Один вопрос от 2-го агента задан — ждём ответ пользователя
+        followUpPending = true
+    }
+
+    // ===== Публичная отправка =====
     fun send() {
         val text = _state.value.input.trim()
         if (text.isEmpty() || _state.value.sending) return
+
+        // Пользователь ответил → можно задать следующий follow-up при необходимости
+        followUpPending = false
 
         val newList = _state.value.messages + ChatMessage(ChatMessage.Role.User, text)
         _state.value = _state.value.copy(messages = newList, input = "", sending = true, error = null)
 
         viewModelScope.launch {
             try {
-                val reply = completeNow()
-                _state.value = _state.value.copy(
-                    messages = _state.value.messages + ChatMessage(ChatMessage.Role.Assistant, reply),
-                    sending = false
-                )
+                // Ветка киноагента
+                if (phase == Phase.FEEDBACK_PENDING && _state.value.messages.isNotEmpty()) {
+                    val playlistText = _state.value.messages
+                        .asReversed()
+                        .firstOrNull {
+                            it.role == ChatMessage.Role.Assistant &&
+                                    it.agentType == AgentType.MUSIC &&
+                                    isTenTrackNumberedPlaylist(it.content)
+                        }
+                        ?.content ?: ""
 
-                // 1) Достаточно сигналов — финализация без показа служебного промпта
+                    val agent2Reply = runAgent2(playlistText, userUtterance = text).trim()
+                    if (agent2Reply.isNotEmpty()) {
+                        _state.value = _state.value.copy(
+                            messages = _state.value.messages + ChatMessage(
+                                ChatMessage.Role.Assistant,
+                                agent2Reply,
+                                agentType = AgentType.MOVIE
+                            ),
+                            sending = false
+                        )
+                    } else {
+                        _state.value = _state.value.copy(sending = false)
+                    }
+
+                    if (containsFiveNumberedLines(agent2Reply)) {
+                        phase = Phase.MOVIE_DONE
+                        followUpPending = false
+                    } else {
+                        // Задан вопрос/уточнение 2-м агентом → ждём ответ пользователя
+                        followUpPending = true
+                    }
+                    return@launch
+                }
+
+                // Обычный музыкальный диалог
+                val reply = completeNow().trim()
+                if (reply.isNotEmpty()) {
+                    _state.value = _state.value.copy(
+                        messages = _state.value.messages + ChatMessage(
+                            ChatMessage.Role.Assistant,
+                            reply,
+                            agentType = AgentType.MUSIC
+                        ),
+                        sending = false
+                    )
+                } else {
+                    _state.value = _state.value.copy(sending = false)
+                }
+
+                // Если модель уже выдала плейлист — сразу запустить киноагента
+                maybeStartMovieAgent(reply)
+                if (phase == Phase.FEEDBACK_PENDING) return@launch
+
+                // Хвостовая логика: либо финализация, либо один follow-up
                 if (shouldFinalizePlaylist()) {
                     triggerFinalize()
                     return@launch
                 }
 
-                // 2) Если модель уже задала вопрос — не дублируем наш
-                if (looksLikeQuestion(reply)) return@launch
+                // Если модель уже задала вопрос — ждём ответ, свой follow-up не добавляем
+                if (looksLikeQuestion(reply)) {
+                    followUpPending = true
+                    return@launch
+                }
 
-                // 3) Иначе — добавляем один уточняющий вопрос
-                val followUp = buildFollowUpQuestion()
-                _state.value = _state.value.copy(
-                    messages = _state.value.messages + ChatMessage(ChatMessage.Role.Assistant, followUp)
-                )
+                // Если follow-up ещё не задан — один уточняющий вопрос
+                if (!followUpPending) {
+                    val followUp = buildFollowUpQuestion().trim()
+                    if (followUp.isNotEmpty()) {
+                        _state.value = _state.value.copy(
+                            messages = _state.value.messages + ChatMessage(
+                                ChatMessage.Role.Assistant,
+                                followUp,
+                                agentType = AgentType.MUSIC
+                            )
+                        )
+                        followUpPending = true
+                    }
+                }
+
             } catch (t: Throwable) {
                 _state.value = _state.value.copy(sending = false, error = t.message ?: "Unknown error")
             }
         }
     }
 
-    // --- Скрытая отправка дополнительного запроса (не виден в ленте) ---
+    // ===== Скрытая отправка (служебные промпты не показываем) =====
     private fun sendInternal(extraUserInput: String? = null) {
         if (_state.value.sending) return
         _state.value = _state.value.copy(sending = true, error = null)
 
         viewModelScope.launch {
             try {
-                val reply = completeNow(overrideInput = extraUserInput)
-                _state.value = _state.value.copy(
-                    messages = _state.value.messages + ChatMessage(ChatMessage.Role.Assistant, reply),
-                    sending = false
-                )
+                val reply = completeNow(overrideInput = extraUserInput).trim()
+                if (reply.isNotEmpty()) {
+                    _state.value = _state.value.copy(
+                        messages = _state.value.messages + ChatMessage(
+                            ChatMessage.Role.Assistant,
+                            reply,
+                            agentType = if (phase == Phase.GATHERING) AgentType.MUSIC else AgentType.MOVIE
+                        ),
+                        sending = false
+                    )
+                } else {
+                    _state.value = _state.value.copy(sending = false)
+                }
+
+                // После скрытого финального вызова тоже проверяем и запускаем киноагента
+                maybeStartMovieAgent(reply)
+
             } catch (t: Throwable) {
                 _state.value = _state.value.copy(sending = false, error = t.message ?: "Unknown error")
             }
@@ -257,20 +395,13 @@ $allText
 
     private suspend fun completeNow(overrideInput: String? = null): String {
         val systemPrompt = _state.value.settings.systemPrompt.ifBlank { defaultSystemPrompt() }
-
-        val chatPairs = _state.value.messages.filter {
-            it.role == ChatMessage.Role.User || it.role == ChatMessage.Role.Assistant
-        }.map { (role, text) ->
-            val r = if (role == ChatMessage.Role.User) "user" else "assistant"
-            r to text
-        }
-
-        return client.complete(
-            // Передаём только user/assistant для истории
-            messages = chatPairs,
-            overrideInput = overrideInput,
-            systemPrompt = systemPrompt // Новый параметр
-        )
+        val base = _state.value.messages
+            .filter { it.role == ChatMessage.Role.User || it.role == ChatMessage.Role.Assistant }
+            .map {
+                val r = if (it.role == ChatMessage.Role.User) "user" else "assistant"
+                r to it.content
+            }
+        return client.complete(base, overrideInput, systemPrompt)
     }
 
     private fun triggerFinalize() {
@@ -284,6 +415,36 @@ $allText
 $summary
 """.trimIndent()
 
-        sendInternal(extraUserInput = finalizePrompt) // скрытая отправка без отображения промпта в чате
+        sendInternal(extraUserInput = finalizePrompt)
+    }
+
+    private suspend fun runAgent2(playlistText: String, userUtterance: String): String {
+        agent2History += "user" to userUtterance
+
+        val tail = agent2History.takeLast(6).joinToString("\n") { (role, txt) ->
+            val r = if (role == "user") "Пользователь" else "Куратор"
+            "$r: $txt"
+        }
+
+        val hiddenInput = """
+Это плейлист пользователя:
+$playlistText
+
+Диалог:
+$tail
+""".trimIndent()
+
+        val out = client.complete(
+            messages = emptyList(),
+            overrideInput = hiddenInput,
+            systemPrompt = agent2SystemPrompt()
+        ).trim()
+
+        if (out.isNotEmpty()) {
+            if (!containsFiveNumberedLines(out)) {
+                agent2History += "assistant" to out
+            }
+        }
+        return out
     }
 }

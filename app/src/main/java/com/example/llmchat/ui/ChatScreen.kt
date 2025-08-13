@@ -5,10 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,12 +33,8 @@ fun ChatScreen(
             TopAppBar(
                 title = { Text("LLM Chat") },
                 actions = {
-                    IconButton(onClick = onNewChat) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Новый плейлист")
-                    }
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
+                    IconButton(onClick = onNewChat) { Icon(Icons.Default.Refresh, contentDescription = "Новый плейлист") }
+                    IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
                 }
             )
         },
@@ -62,8 +57,7 @@ fun ChatScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                     FilledIconButton(onClick = onSend, enabled = !state.sending) {
-                        Icon(Icons.Default.Send, contentDescription = null) // иконка не важна
-                        // при желании замени на Send (оставлено как нейтрально)
+                        Icon(Icons.Default.Send, contentDescription = "Отправить") // ✈
                     }
                 }
             }
@@ -103,21 +97,24 @@ fun ChatScreen(
 
 @Composable
 private fun MessagesList(messages: List<ChatMessage>) {
+    // Не отображаем пустые сообщения
+    val visible = remember(messages) { messages.filter { it.content.isNotBlank() } }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(8.dp),
         reverseLayout = false
     ) {
-        itemsIndexed(messages) { index, msg ->
+        itemsIndexed(visible) { index, msg ->
             val isUser = msg.role == ChatMessage.Role.User
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
             ) {
                 MessageBubble(
-                    text = msg.content,
-                    isUser = isUser
+                    message = msg,
+                    isFirstMessage = index == 0
                 )
             }
         }
@@ -125,7 +122,9 @@ private fun MessagesList(messages: List<ChatMessage>) {
 }
 
 @Composable
-private fun MessageBubble(text: String, isUser: Boolean) {
+private fun MessageBubble(message: ChatMessage, isFirstMessage: Boolean) {
+    val isUser = message.role == ChatMessage.Role.User
+
     Surface(
         color = if (isUser) MaterialTheme.colorScheme.primaryContainer
         else MaterialTheme.colorScheme.secondaryContainer,
@@ -139,8 +138,18 @@ private fun MessageBubble(text: String, isUser: Boolean) {
                 .fillMaxWidth(),
             verticalAlignment = Alignment.Top
         ) {
+            if (!isUser) {
+                val badge = when (message.agentType) {
+                    AgentType.MUSIC -> "🎵"
+                    AgentType.MOVIE -> "🎬"
+                    else -> ""
+                }
+                if (badge.isNotEmpty()) {
+                    Text(badge, modifier = Modifier.padding(end = 6.dp))
+                }
+            }
             Text(
-                text = text,
+                text = message.content,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -158,7 +167,6 @@ private fun SettingsSheet(
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
     var model by remember { mutableStateOf(initial.model) }
-    var forceJson by remember { mutableStateOf(initial.forceJsonSchema) }
     var systemPrompt by remember { mutableStateOf(initial.systemPrompt) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -171,42 +179,20 @@ private fun SettingsSheet(
             ProviderChips(provider) { provider = it }
 
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = { baseUrl = it },
-                label = { Text("Base URL") },
-                singleLine = true
-            )
+            OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("Base URL") }, singleLine = true)
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                label = { Text("API Key") },
-                singleLine = true
-            )
+            OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, label = { Text("API Key") }, singleLine = true)
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = model,
-                onValueChange = { model = it },
-                label = { Text("Model") },
-                singleLine = true
-            )
-
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Строгий JSON (Schema)", modifier = Modifier.weight(1f))
-                Switch(checked = forceJson, onCheckedChange = { forceJson = it })
-            }
+            OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("Model") }, singleLine = true)
 
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = systemPrompt,
                 onValueChange = { systemPrompt = it },
                 label = { Text("System Prompt (инструкция)") },
-                minLines = 3,
-                maxLines = 6,
+                minLines = 3, maxLines = 6,
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("По умолчанию — плейлист, нумерованный список «Исполнитель — Песня»") }
+                placeholder = { Text("По умолчанию — плейлист (нумерованный список «Исполнитель — Песня»).") }
             )
 
             Spacer(Modifier.height(16.dp))
@@ -220,7 +206,6 @@ private fun SettingsSheet(
                             baseUrl = baseUrl.trim(),
                             apiKey = apiKey.trim(),
                             model = model.trim(),
-                            forceJsonSchema = forceJson,
                             systemPrompt = systemPrompt.trim()
                         )
                     )
