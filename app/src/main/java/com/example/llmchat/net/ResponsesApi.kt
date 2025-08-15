@@ -30,6 +30,16 @@ interface ResponsesApi {
 
 /* ---------- REQUEST MODELS ---------- */
 
+/**
+ * Модель запроса для генерации ответа от LLM.
+ *
+ * @property model Имя используемой языковой модели.
+ * @property input Входные данные: строка или список сообщений.
+ * @property instructions Системная инструкция для модели (альтернатива role=system).
+ * @property temperature Параметр температуры для генерации (степень креативности).
+ * @property maxOutputTokens Максимальное количество токенов в ответе.
+ * @property text Опции форматирования текстового выхода.
+ */
 @JsonClass(generateAdapter = true)
 data class ResponsesRequest(
     val model: String,
