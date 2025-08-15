@@ -7,7 +7,19 @@ import retrofit2.http.Header
 import retrofit2.http.Headers
 import retrofit2.http.POST
 
+/**
+ * API-интерфейс для отправки запросов и получения ответов от LLM-сервера.
+ *
+ * Содержит методы для создания ответа на основе входных данных и параметров модели.
+ */
 interface ResponsesApi {
+    /**
+     * Отправляет запрос на генерацию ответа от LLM.
+     *
+     * @param auth Токен авторизации в формате "Bearer \<token\>".
+     * @param body Объект запроса с параметрами генерации.
+     * @return Результат генерации ответа от LLM.
+     */
     @Headers("Content-Type: application/json")
     @POST("/v1/responses")
     suspend fun createResponse(
