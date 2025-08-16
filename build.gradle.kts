@@ -22,3 +22,13 @@ tasks.register<Exec>("pushRepo") {
 
     commandLine(bash, script, msg)
 }
+
+tasks.register<Exec>("updateCommitsAndPush") {
+    workingDir = rootDir
+    val shell = if (OperatingSystem.current().isWindows) "bash" else "/bin/sh"
+    commandLine(shell, "${rootDir}/tools/update_commits_and_push.sh")
+    // Пример проброса переменных в скрипт:
+    // environment("AUTHOR", "you@example.com")
+    // environment("LIMIT", "100")
+    // environment("SINCE", "2025-06-01")
+}
