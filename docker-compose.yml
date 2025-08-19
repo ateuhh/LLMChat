@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  llmchat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: llmchat
+    restart: unless-stopped
+
+    # читаем переменные из .env
+    env_file:
+      - .env
+
+    # монтируем ваш локальный репозиторий внутрь контейнера
+    volumes:
+      - /Users/mikhailboldyrev/AndroidStudioProjects/LLMChat:/workspace/LLMChat
+
+    # если ваше приложение слушает порт - раскомментируйте
+    # ports:
+    #   - "8080:8080"

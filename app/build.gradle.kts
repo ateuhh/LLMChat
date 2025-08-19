@@ -24,7 +24,7 @@ android {
         compose = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
+        kotlinCompilerExtensionVersion = "2.0.21"
     }
     kotlinOptions {
         jvmTarget = "17"
@@ -39,29 +39,31 @@ android {
 dependencies {
     // Compose
     implementation (platform ("androidx.compose:compose-bom:2024.10.00"))
-    implementation ("androidx.compose.ui:ui")
-    implementation ("androidx.compose.ui:ui-tooling-preview")
-    debugImplementation ("androidx.compose.ui:ui-tooling")
-    implementation( "androidx.compose.material3:material3:1.3.2")
-    implementation ("androidx.activity:activity-compose:1.9.3")
-    implementation( "androidx.lifecycle:lifecycle-runtime-ktx:2.8.5")
-    implementation ("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.5")
+    implementation (libs.androidx.ui)
+    implementation (libs.androidx.ui.tooling.preview)
+    debugImplementation (libs.androidx.ui.tooling)
+    implementation( libs.androidx.material3)
+    implementation (libs.androidx.activity.compose)
+    implementation( libs.androidx.lifecycle.runtime.ktx)
+    implementation (libs.androidx.lifecycle.viewmodel.compose)
 
     // Networking
-    implementation ("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation ("com.squareup.retrofit2:retrofit:2.11.0")
-    implementation ("com.squareup.retrofit2:converter-moshi:3.0.0")
-    implementation("com.squareup.moshi:moshi-kotlin:1.15.2")
-    implementation("com.squareup.okhttp3:logging-interceptor:5.1.0") // Используйте последнюю версию
+    implementation (libs.okhttp)
+    implementation (libs.retrofit)
+    implementation (libs.converter.moshi)
+    implementation(libs.moshi.kotlin)
+    implementation(libs.logging.interceptor) // Используйте последнюю версию
 
 
     // Coroutines / Flow
-    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation (libs.kotlinx.coroutines.android)
 
     // DataStore
-    implementation ("androidx.datastore:datastore-preferences:1.1.1")
+    implementation (libs.androidx.datastore.preferences)
 
     // Icons
-    implementation("com.google.android.material:material:1.12.0")
-    implementation ("androidx.compose.material:material-icons-extended:1.7.5")
+    implementation(libs.material)
+    implementation (libs.androidx.material.icons.extended)
+
+    implementation(libs.coil.compose)
 }

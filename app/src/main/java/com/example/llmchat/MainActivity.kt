@@ -11,6 +11,7 @@ import com.example.llmchat.data.SettingsStore
 import com.example.llmchat.net.LlmSettings
 import com.example.llmchat.ui.ChatScreen
 import com.example.llmchat.ui.ChatViewModel
+import com.example.llmchat.ui.CommitChartScreen
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -26,14 +27,15 @@ class MainActivity : ComponentActivity() {
                 // простой manual ViewModel без Hilt/VM factory
                 val viewModel = rememberViewModel(saved)
 
-                ChatScreen(
-                    state = viewModel.state.collectAsState().value,
-                    onSend = { viewModel.send() },
-                    onInputChange = { viewModel.onInputChange(it) },
-                    onOpenSettings = { /* no-op */ },
-                    onSaveSettings = { new -> scope.launch { settingsStore.save(new) } },
-                    onNewChat = { viewModel.newChat() }
-                )
+//                ChatScreen(
+//                    state = viewModel.state.collectAsState().value,
+//                    onSend = { viewModel.send() },
+//                    onInputChange = { viewModel.onInputChange(it) },
+//                    onOpenSettings = { /* no-op */ },
+//                    onSaveSettings = { new -> scope.launch { settingsStore.save(new) } },
+//                    onNewChat = { viewModel.newChat() }
+//                )
+                CommitChartScreen()
             }
         }
     }
